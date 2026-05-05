@@ -1,0 +1,46 @@
+substitutions:
+  _SERVICE_NAME: margin-api
+  _REGION: europe-west1
+  _IMAGE: europe-west1-docker.pkg.dev/gen-lang-client-0447933194/peck-repo/margin-api
+
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    id: Build
+    args:
+      - build
+      - -t
+      - '$_IMAGE:$BUILD_ID'
+      - -t
+      - '$_IMAGE:latest'
+      - .
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: Push
+    args:
+      - push
+      - --all-tags
+      - '$_IMAGE'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: Deploy
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - '$_SERVICE_NAME'
+      - --image=$_IMAGE:$BUILD_ID
+      - --region=$_REGION
+      - --platform=managed
+      - --quiet
+      - --min-instances=1
+      - --max-instances=3
+      - --cpu=1
+      - --memory=512Mi
+      - --no-cpu-throttling
+      - --port=8080
+      - --set-env-vars=BSV_NETWORK=main,MARGIN_APP_NAME=margin,WAB_BASE_URL=https://peck-wab-drrpq3zo7q-ew.a.run.app,OVERLAY_BASE_URL=https://overlay.peck.to,OVERLAY_TOPIC=peck-schema
+      - --set-secrets=SPONSOR_PRIVATE_KEY_HEX=margin-sponsor-key:latest,SPONSOR_INITIAL_UTXO=margin-sponsor-utxo:latest,SPONSOR_PARENT_TX_HEX=margin-sponsor-parent-tx:latest
+
+images:
+  - '$_IMAGE:$BUILD_ID'
+  - '$_IMAGE:latest'
