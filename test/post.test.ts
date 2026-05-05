@@ -78,6 +78,9 @@ class FakeWab extends WabClient {
         const fmt = req.signature_format ?? "bsm-compact";
         let signature: string;
         if (fmt === "ecdsa-der") {
+            // Mirror WAB: PrivateKey.sign() applies sha256 internally, so
+            // signing the raw preimage produces ECDSA(sha256(preimage)) — the
+            // shape verifyAIPBRC77 reconstructs.
             const sig = TEST_PRIV.sign(messageBytes);
             signature = Buffer.from(sig.toDER() as number[]).toString("base64");
         } else {
@@ -243,10 +246,10 @@ describe("POST /post — happy path", () => {
 
         // Margin-api asked WAB for identity first
         expect(wab.lastIdentityRequest?.id_token).toBe("valid-token");
-        // Then asked WAB to ECDSA-sign sha256(preimage) as 32-byte hex digest
+        // Then asked WAB to ECDSA-sign the canonical preimage (WAB sha256s internally)
         expect(wab.lastSignRequest?.message_encoding).toBe("hex");
         expect(wab.lastSignRequest?.signature_format).toBe("ecdsa-der");
-        expect(wab.lastSignRequest?.message).toMatch(/^[0-9a-f]{64}$/);
+        expect(wab.lastSignRequest?.message).toMatch(/^[0-9a-f]+$/);
 
         // Overlay was called once with the BEEF
         expect(overlay.submitCalls.length).toBe(1);
@@ -290,10 +293,11 @@ describe("POST /post — happy path", () => {
         const preimageBytes: number[] = [];
         for (let i = 0; i < pushes.length - 1; i++) preimageBytes.push(...pushes[i]);
 
-        const digest = require("crypto").createHash("sha256").update(Buffer.from(preimageBytes)).digest();
+        // Signature.verify(msg, key) applies sha256 internally — pass the
+        // raw preimage so the digest matches what was signed (sha256(preimage)).
         const sig = Signature.fromDER(Array.from(Buffer.from(sigDerB64, "base64")));
         const pubKey = PublicKey.fromString(res.body.signing_pubkey);
-        expect(sig.verify(Array.from(digest as Buffer), pubKey)).toBe(true);
+        expect(sig.verify(preimageBytes, pubKey)).toBe(true);
     });
 
     it("never writes the OAuth handle into the script payload", async () => {

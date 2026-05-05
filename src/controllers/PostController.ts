@@ -21,7 +21,6 @@
  */
 
 import { Request, Response } from "express";
-import { createHash } from "crypto";
 import { toContextUrn, InvalidUrlError } from "../lib/urlCanon";
 import { WabClient, WabError } from "../services/WabClient";
 import { buildMarginPreimage, appendMarginSignature } from "../services/BitcoinSchemaBuilder";
@@ -103,13 +102,14 @@ export class PostController {
             signingPubKeyHex: identity.signing_pubkey,
         });
 
-        // Phase 3: hash preimage locally then ask WAB to ECDSA-sign the digest.
-        const preimageDigest = createHash("sha256").update(Buffer.from(preimageHex, "hex")).digest("hex");
+        // Phase 3: send the canonical preimage bytes to WAB. WAB applies sha256
+        // internally and signs — DER signature covers sha256(preimage), which
+        // matches what peck-indexer-go's verifyAIPBRC77 reconstructs.
         let wabResp;
         try {
             wabResp = await this.wab.marginSign({
                 id_token,
-                message: preimageDigest,
+                message: preimageHex,
                 message_encoding: "hex",
                 signature_format: "ecdsa-der",
             });
