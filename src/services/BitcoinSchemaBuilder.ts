@@ -1,19 +1,20 @@
 /**
  * Bitcoin Schema OP_RETURN builder for Margin URL-anchored comments.
  *
+ * BRC-77 lane (peck-social-v1 §2.2 v1.1) — algorithm marker "BRC77" with
+ * sender_pubkey_hex in the signing-identifier slot and raw DER ECDSA over
+ * sha256(preimage) as the signature payload. No BSM-magic, no recovery
+ * byte, no DER→BSM-compact bridge.
+ *
  * Two-phase canonical AIP:
  *   Phase 1: buildMarginPreimage() assembles everything up through the AIP
- *            block's signing_address — the "preceding pushdata" the AIP
+ *            block's sender_pubkey_hex — the "preceding pushdata" the AIP
  *            signature must cover. Returns the partial Script + a hex
- *            preimage to hand to WAB.
- *   Phase 2: appendMarginSignature() pushes the signature returned by WAB
- *            as the final pushdata, producing the complete OP_RETURN.
- *
- * The signature covers the concatenation of every preceding pushdata-content
- * byte (including the pipe-separator bytes 0x7c that delimit the protocol
- * blocks, and the AIP block's PROTO_AIP / "BITCOIN_ECDSA" / signing_address
- * fields). This matches canonical Bitcom AIP — verifiable by any compliant
- * AIP verifier — not the legacy peck.to shortcut sha256(content).
+ *            preimage to hand to WAB (margin-api computes sha256 of these
+ *            bytes itself before posting to /auth/margin/sign).
+ *   Phase 2: appendMarginSignature() pushes the WAB-returned DER-base64
+ *            signature as the final pushdata, producing the complete
+ *            OP_RETURN.
  *
  * margin-api never holds a private key. WAB derives + signs in-memory after
  * Firebase id_token verification.
@@ -33,17 +34,17 @@
  *     "context" <context-urn, e.g. "url:https://...">
  *   |
  *     <PROTO_AIP>
- *     "BITCOIN_ECDSA"
- *     <signing-address>          ← end of Phase 1; preimage covers up to here
- *     <signature-base64>         ← Phase 2 appends this
+ *     "BRC77"
+ *     <sender-pubkey-hex>        ← end of Phase 1; preimage covers up to here
+ *     <signature-base64>         ← Phase 2 appends DER signature as base64
  *
  * Pipe-byte gotcha: "|" must be pushed as a single 0x7c byte (Script.writeBin
  * wraps the length), not as raw 0x7c — raw is OP_SWAP and breaks parsing.
  *
- * Privacy: B and MAP fields contain ONLY signing_address (via AIP) and the
- * comment + context-URN. NEVER write the OAuth handle (email, sub, name) into
- * the script — keep linkability between K1 and the OAuth account opt-in via
- * a separate cert layer, never baked into post payloads.
+ * Privacy: B and MAP fields contain ONLY pubkey (via AIP) and the comment +
+ * context-URN. NEVER write the OAuth handle (email, sub, name) into the
+ * script — keep linkability between K1 and the OAuth account opt-in via a
+ * separate cert layer, never baked into post payloads.
  */
 
 import { Script, OP } from "@bsv/sdk";
@@ -80,8 +81,8 @@ export interface BuildMarginPreimageOpts {
     contextUrn: string;
     /** App name in the MAP record — typically "margin". */
     app: string;
-    /** AIP signing address fetched from WAB /auth/margin/identity. */
-    signingAddress: string;
+    /** AIP sender pubkey (66-char compressed hex) fetched from WAB /auth/margin/identity. */
+    signingPubKeyHex: string;
 }
 
 export interface MarginPreimageResult {
@@ -120,8 +121,8 @@ export function buildMarginPreimage(opts: BuildMarginPreimageOpts): MarginPreima
 
     // AIP header — signature is appended in Phase 2 and is NOT part of the preimage
     pushAcc(s, acc, PROTO_AIP);
-    pushAcc(s, acc, "BITCOIN_ECDSA");
-    pushAcc(s, acc, opts.signingAddress);
+    pushAcc(s, acc, "BRC77");
+    pushAcc(s, acc, opts.signingPubKeyHex);
 
     return {
         script: s,

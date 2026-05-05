@@ -21,6 +21,7 @@
  */
 
 import { Request, Response } from "express";
+import { createHash } from "crypto";
 import { toContextUrn, InvalidUrlError } from "../lib/urlCanon";
 import { WabClient, WabError } from "../services/WabClient";
 import { buildMarginPreimage, appendMarginSignature } from "../services/BitcoinSchemaBuilder";
@@ -92,21 +93,25 @@ export class PostController {
             throw e;
         }
 
-        // Phase 2: build canonical AIP preimage with the resolved address.
+        // Phase 2: build canonical AIP preimage with the resolved pubkey.
+        // BRC-77 lane (peck-social-v1 §2.2 v1.1) — pubkey-hex in signing-
+        // identifier slot, sha256 (not BSM-magic) over preimage, raw DER sig.
         const { script, preimageHex } = buildMarginPreimage({
             content: comment,
             contextUrn,
             app: this.config.appName,
-            signingAddress: identity.signing_address,
+            signingPubKeyHex: identity.signing_pubkey,
         });
 
-        // Phase 3: WAB BSM-signs the preimage bytes.
+        // Phase 3: hash preimage locally then ask WAB to ECDSA-sign the digest.
+        const preimageDigest = createHash("sha256").update(Buffer.from(preimageHex, "hex")).digest("hex");
         let wabResp;
         try {
             wabResp = await this.wab.marginSign({
                 id_token,
-                message: preimageHex,
+                message: preimageDigest,
                 message_encoding: "hex",
+                signature_format: "ecdsa-der",
             });
         } catch (e) {
             if (e instanceof WabError) {
@@ -121,13 +126,13 @@ export class PostController {
             throw e;
         }
 
-        // Sanity: WAB should return the same address from identity and sign —
+        // Sanity: WAB should return the same pubkey from identity and sign —
         // both derive from the same OAuth sub. Mismatch means token swap.
-        if (wabResp.signing_address !== identity.signing_address) {
+        if (wabResp.signing_pubkey !== identity.signing_pubkey) {
             console.error(
-                "[PostController] WAB address mismatch between identity and sign — possible token swap",
+                "[PostController] WAB pubkey mismatch between identity and sign — possible token swap",
             );
-            res.status(500).json({ error: "WAB returned mismatched signing addresses" });
+            res.status(500).json({ error: "WAB returned mismatched signing pubkeys" });
             return;
         }
 

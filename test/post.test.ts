@@ -75,9 +75,17 @@ class FakeWab extends WabClient {
         if (req.id_token === "SIGN_DOWN") throw new WabError(503, "sign upstream down");
         const enc = req.message_encoding ?? "utf8";
         const messageBytes = Utils.toArray(req.message, enc);
-        const sig = BSM.sign(messageBytes, TEST_PRIV, "base64") as string;
+        const fmt = req.signature_format ?? "bsm-compact";
+        let signature: string;
+        if (fmt === "ecdsa-der") {
+            const sig = TEST_PRIV.sign(messageBytes);
+            signature = Buffer.from(sig.toDER() as number[]).toString("base64");
+        } else {
+            signature = BSM.sign(messageBytes, TEST_PRIV, "base64") as string;
+        }
         return {
-            signature: sig,
+            signature,
+            signature_format: fmt,
             signing_address: TEST_ADDR,
             signing_pubkey: TEST_PUB.toString(),
             provider: "google",
@@ -235,9 +243,10 @@ describe("POST /post — happy path", () => {
 
         // Margin-api asked WAB for identity first
         expect(wab.lastIdentityRequest?.id_token).toBe("valid-token");
-        // Then asked WAB to sign canonical preimage hex
+        // Then asked WAB to ECDSA-sign sha256(preimage) as 32-byte hex digest
         expect(wab.lastSignRequest?.message_encoding).toBe("hex");
-        expect(wab.lastSignRequest?.message).toMatch(/^[0-9a-f]+$/);
+        expect(wab.lastSignRequest?.signature_format).toBe("ecdsa-der");
+        expect(wab.lastSignRequest?.message).toMatch(/^[0-9a-f]{64}$/);
 
         // Overlay was called once with the BEEF
         expect(overlay.submitCalls.length).toBe(1);
@@ -249,7 +258,7 @@ describe("POST /post — happy path", () => {
         expect(sponsor!.currentBalance()).toBeGreaterThan(99_500);  // small fee for ~349-byte script
     });
 
-    it("script_hex contains B + MAP + AIP in canonical order", async () => {
+    it("script_hex contains B + MAP + AIP (BRC-77) in canonical order", async () => {
         const { app } = await setup();
         const res = await request(app).post("/post").send({
             url: "https://example.com/foo",
@@ -263,11 +272,11 @@ describe("POST /post — happy path", () => {
         expect(pushes[1]).toBe("Hello world");
         expect(pushes[5]).toBe(PROTO_MAP);
         expect(pushes[14]).toBe(PROTO_AIP);
-        expect(pushes[15]).toBe("BITCOIN_ECDSA");
-        expect(pushes[16]).toBe(TEST_ADDR);
+        expect(pushes[15]).toBe("BRC77");
+        expect(pushes[16]).toBe(TEST_PUB.toString());
     });
 
-    it("AIP signature verifies canonically against signing_address", async () => {
+    it("AIP signature verifies canonically (BRC-77 lane) against signing_pubkey", async () => {
         const { app } = await setup();
         const comment = "Verify me on chain";
         const res = await request(app).post("/post").send({
@@ -277,14 +286,14 @@ describe("POST /post — happy path", () => {
         });
 
         const pushes = parseOpReturnPushes(res.body.script_hex);
-        const signatureB64 = pushes[pushes.length - 1].toString("utf8");
+        const sigDerB64 = pushes[pushes.length - 1].toString("utf8");
         const preimageBytes: number[] = [];
         for (let i = 0; i < pushes.length - 1; i++) preimageBytes.push(...pushes[i]);
 
-        const sig = Signature.fromCompact(signatureB64, "base64");
+        const digest = require("crypto").createHash("sha256").update(Buffer.from(preimageBytes)).digest();
+        const sig = Signature.fromDER(Array.from(Buffer.from(sigDerB64, "base64")));
         const pubKey = PublicKey.fromString(res.body.signing_pubkey);
-        expect(BSM.verify(preimageBytes, sig, pubKey)).toBe(true);
-        expect(pubKey.toAddress("mainnet")).toBe(res.body.signing_address);
+        expect(sig.verify(Array.from(digest as Buffer), pubKey)).toBe(true);
     });
 
     it("never writes the OAuth handle into the script payload", async () => {

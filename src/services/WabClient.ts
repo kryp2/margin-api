@@ -20,17 +20,20 @@ export interface WabIdentityResponse {
 export interface WabSignRequest {
     id_token: string;
     /** Bytes to sign, encoded per `message_encoding`. WAB is opaque to what
-     *  these bytes represent — for canonical AIP this is the concatenation
-     *  of all preceding pushdata-bytes in the OP_RETURN. */
+     *  these bytes represent — for canonical BRC-77 AIP this is the
+     *  sha256 digest (32 bytes hex) of the canonical preimage. */
     message: string;
     message_encoding?: "utf8" | "hex" | "base64";
+    /** "bsm-compact" (legacy default) | "ecdsa-der" (BRC-77 lane). */
+    signature_format?: "bsm-compact" | "ecdsa-der";
 }
 
 export interface WabSignResponse {
-    signature: string;        // BSM base64
-    signing_address: string;  // P2PKH derived from OAuth sub
-    signing_pubkey: string;   // compressed pubkey hex
-    provider: string;         // "google"
+    signature: string;             // base64 — BSM-compact OR DER per signature_format
+    signature_format?: "bsm-compact" | "ecdsa-der";
+    signing_address: string;       // P2PKH derived from OAuth sub
+    signing_pubkey: string;        // compressed pubkey hex
+    provider: string;              // "google"
 }
 
 export class WabError extends Error {
