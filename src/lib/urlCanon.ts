@@ -50,6 +50,12 @@ export function canonicalizeUrl(input: string, opts: CanonicalizeOptions = {}): 
     parsed.username = "";
     parsed.password = "";
 
+    // Drop the fragment. It is a client-side anchor that never reaches the
+    // server and never identifies a distinct resource, so two visitors on the
+    // same page (one with #comments, one without) must produce the SAME
+    // context URN — otherwise their comments split across two on-chain anchors.
+    parsed.hash = "";
+
     const stripSet = new Set<string>(TRACKING_PARAMS);
     if (opts.extraStripParams) {
         for (const k of opts.extraStripParams) stripSet.add(k);
