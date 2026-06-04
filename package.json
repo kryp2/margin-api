@@ -2,7 +2,7 @@
   "name": "margin-api",
   "version": "0.1.0",
   "description": "Margin orchestrator: canonicalize URL → build draft → sign via WAB → assemble OP_RETURN",
-  "license": "MIT",
+  "license": "Open BSV",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
