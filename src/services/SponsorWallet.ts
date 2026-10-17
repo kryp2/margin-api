@@ -97,6 +97,27 @@ export class SponsorWallet {
         return next;
     }
 
+    /**
+     * Build, submit and commit in one critical section. buildSpendingTo() alone
+     * releases the lock before the caller has submitted and advanced, so two
+     * concurrent posts would both spend the same UTXO. Here the next build
+     * starts only after `submit` resolved and the change output was committed,
+     * or after it rejected (state unchanged).
+     */
+    async buildSubmitAndAdvance(
+        opReturnScript: Script,
+        submit: (build: BroadcastBuildResult) => Promise<void>,
+    ): Promise<BroadcastBuildResult> {
+        const next = this.buildLock.then(async () => {
+            const build = await this._build(opReturnScript);
+            await submit(build);
+            this.advance(build.changeUtxo);
+            return build;
+        });
+        this.buildLock = next.catch(() => undefined);
+        return next;
+    }
+
     private async _build(opReturnScript: Script): Promise<BroadcastBuildResult> {
         const utxo = this.currentUtxo;
         if (!utxo) throw new NoSeededUtxoError();

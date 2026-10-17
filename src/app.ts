@@ -21,6 +21,10 @@ export function buildApp(config: Config, deps: AppDeps = {}) {
 
     const app = express();
 
+    // Behind exactly one proxy hop (Cloud Run's frontend). Without this req.ip is the
+    // proxy address, so the /post rate limit would be one shared bucket for everyone.
+    app.set("trust proxy", 1);
+
     app.use(cors({
         origin: config.corsOrigins === "*" ? true : config.corsOrigins.split(",").map(s => s.trim()),
     }));
