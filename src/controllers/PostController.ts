@@ -149,7 +149,11 @@ export class PostController {
 
         let build;
         try {
-            build = await this.sponsor.buildSpendingTo(script);
+            // Build, submit and advance under one lock so concurrent posts chain
+            // off each other's change output instead of double-spending one UTXO.
+            build = await this.sponsor.buildSubmitAndAdvance(script, async (b) => {
+                await this.overlay.submit(b.beefHex, [this.config.overlayTopic]);
+            });
         } catch (e) {
             if (e instanceof InsufficientFundsError) {
                 res.status(503).json({ error: "sponsor wallet out of funds" });
@@ -159,12 +163,6 @@ export class PostController {
                 res.status(503).json({ error: "sponsor wallet has no UTXO state" });
                 return;
             }
-            throw e;
-        }
-
-        try {
-            await this.overlay.submit(build.beefHex, [this.config.overlayTopic]);
-        } catch (e) {
             if (e instanceof OverlayError) {
                 console.error("[PostController] overlay rejected:", e.message);
                 res.status(502).json({ error: "overlay rejected broadcast", detail: e.message });
@@ -172,9 +170,6 @@ export class PostController {
             }
             throw e;
         }
-
-        // Overlay accepted + admitted — commit the new UTXO chain.
-        this.sponsor.advance(build.changeUtxo);
 
         res.json({
             txid: build.txid,

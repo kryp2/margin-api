@@ -100,9 +100,11 @@ class FakeWab extends WabClient {
 class FakeOverlay extends OverlayClient {
     public submitCalls: { beefHex: string; topics: string[] }[] = [];
     public mode: "ok" | "no-admit" | "http-500" = "ok";
+    public delayMs = 0;
     constructor() { super("http://fake-overlay"); }
     public override async submit(beefHex: string, topics: string[] = ["peck-schema"]) {
         this.submitCalls.push({ beefHex, topics });
+        if (this.delayMs) await new Promise(r => setTimeout(r, this.delayMs));
         if (this.mode === "no-admit") {
             throw new OverlayError(200, "overlay admitted no outputs (test)");
         }
@@ -385,5 +387,29 @@ describe("POST /post — broadcast layer", () => {
         // Different txids, two overlay submits
         expect(res1.body.txid).not.toBe(res2.body.txid);
         expect(overlay.submitCalls.length).toBe(2);
+    });
+
+    it("concurrent posts chain off each other instead of spending the same UTXO", async () => {
+        const { app, overlay } = await setup();
+        overlay.delayMs = 50;
+        const send = (n: string) => request(app).post("/post").send({
+            url: `https://example.com/${n}`, comment: n, id_token: "valid",
+        });
+        const [r1, r2] = await Promise.all([send("a"), send("b")]);
+        expect(r1.status).toBe(200);
+        expect(r2.status).toBe(200);
+        expect(overlay.submitCalls.length).toBe(2);
+        const [first, second] = overlay.submitCalls.map(c => Transaction.fromHexBEEF(c.beefHex));
+        expect(second.inputs[0].sourceTXID).toBe(first.id("hex"));
+    });
+});
+
+describe("POST /post — rate limit key", () => {
+    it("limits per X-Forwarded-For client, not one bucket for every caller", async () => {
+        const { app } = await setup();
+        const hit = (ip: string) => request(app).post("/post").set("X-Forwarded-For", ip).send({});
+        for (let i = 0; i < 10; i++) expect((await hit("198.51.100.1")).status).toBe(400);
+        expect((await hit("198.51.100.1")).status).toBe(429);
+        expect((await hit("198.51.100.2")).status).toBe(400);
     });
 });
